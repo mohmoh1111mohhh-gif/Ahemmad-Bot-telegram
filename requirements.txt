@@ -1,0 +1,6 @@
+# requirements.txt
+python-telegram-bot
+SQLAlchemy
+python-dotenv
+httpx
+pg8000
