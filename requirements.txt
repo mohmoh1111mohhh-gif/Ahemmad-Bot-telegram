@@ -4,4 +4,3 @@ SQLAlchemy
 python-dotenv
 httpx
 pg8000
-yt-dlp
