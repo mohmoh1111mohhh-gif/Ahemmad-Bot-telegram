@@ -305,7 +305,7 @@ async def process_xo_move(chat_id, user_id, r, c, context: ContextTypes.DEFAULT_
     return True
 
 async def xo_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """معالج ضغطات أزرار لوحة XO."""
+    """معالج ضغطات أزرار لوحة XO (تم التصحيح لمنع الحركة المزدوجة لـ X في بداية PVP)."""
     query = update.callback_query
     await query.answer()
 
@@ -317,28 +317,37 @@ async def xo_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     game = XO_GAMES[chat_id]
     is_bot_o = game['player_o'] == BOT_O_ID
 
-    # 1. انضمام اللاعب O (PVP)
-    if game['player_o'] is None and user_id != game['player_x']:
-        game['player_o'] = user_id
-        await process_xo_move(chat_id, user_id, -1, -1, context)
-        return
+    # 1. تحليل الحركة المطلوبة
+    try: _, r_str, c_str = query.data.split('_'); r, c = int(r_str), int(c_str)
+    except ValueError: return
     
-    # 2. التحقق من الدور
+    # 2. انضمام اللاعب O (PVP)
+    if game['player_o'] is None:
+        # إذا لم يكن اللاعب O معينًا
+        if user_id != game['player_x']:
+            # المستخدم ليس X، إذن ينضم كلاعب O
+            game['player_o'] = user_id
+            await process_xo_move(chat_id, user_id, -1, -1, context) # تحديث الرسالة فقط (لا حركة)
+            await query.answer(f"أنت الآن اللاعب O. دور اللاعب X لتبدأ.", show_alert=True)
+            return
+        else:
+            # اللاعب X ضغط مرة أخرى قبل انضمام O
+            await query.answer("🚫 يرجى انتظار انضمام اللاعب O أولاً!", show_alert=True)
+            return
+    
+    # 3. التحقق من الدور (بعد التأكد من تعيين player_o)
     is_player_x = user_id == game['player_x']
     is_player_o = user_id == game['player_o']
     
     if game['turn'] == 'X' and not is_player_x: await query.answer("🚫 ليس دورك!", show_alert=True); return
     if game['turn'] == 'O' and not is_player_o and not is_bot_o: await query.answer("🚫 ليس دورك!", show_alert=True); return
     
-    # 3. تنفيذ الحركة البشرية
-    try: _, r_str, c_str = query.data.split('_'); r, c = int(r_str), int(c_str)
-    except ValueError: return
-        
+    # 4. تنفيذ الحركة
     if game['board'][r][c] != ' ': await query.answer("❌ هذا المربع مأخوذ!", show_alert=True); return
         
     move_successful = await process_xo_move(chat_id, user_id, r, c, context)
     
-    # 4. دور البوت (إذا كانت PVB وكانت الحركة ناجحة)
+    # 5. دور البوت (إذا كانت PVB وكانت الحركة ناجحة)
     if move_successful and is_bot_o and game['turn'] == 'O':
         r_bot, c_bot = bot_move(game['board'])
         await process_xo_move(chat_id, BOT_O_ID, r_bot, c_bot, context)
