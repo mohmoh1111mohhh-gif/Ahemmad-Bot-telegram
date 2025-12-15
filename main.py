@@ -130,6 +130,40 @@ async def check_for_blacklisted_words(update: Update, context: ContextTypes.DEFA
         db.close()
     return False
 
+# --- دالة الردود التلقائية الجديدة ---
+
+async def handle_greetings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """الرد على التحية والكلمات المخصصة"""
+    if not update.message or update.message.text is None: return
+
+    # يتم تجاهل الأوامر لتجنب التعارض
+    if update.message.text.startswith('/'): return
+    
+    # نتحقق إذا كانت الرسالة نصية
+    if update.message and update.message.text:
+        # تحويل نص الرسالة إلى حروف صغيرة للمقارنة وإزالة المسافات الزائدة
+        text = update.message.text.lower().strip()
+        
+        # قائمة كلمات التحية للرد عليها "وعليكم السلام"
+        greetings = ["سلام", "السلام عليكم", "سلام عليكم"]
+        
+        # الرد على كلمات التحية
+        if any(word in text for word in greetings):
+            await update.message.reply_text("وعليكم السلام ورحمة الله وبركاته")
+        
+        # الرد على "باي" (Bye)
+        elif text == "باي":
+            await update.message.reply_text("مانك مطول؟")
+            
+        # الرد على "ألاء" (Al-aa) - تم تصحيح الرد إلى "حبيبتي"
+        elif text == "ألاء":
+            await update.message.reply_text("أترك حبيبتي 😍💖")
+            
+        # مثال إضافي على الردود:
+        elif "صباح الخير" in text:
+            await update.message.reply_text("صباح النور والسرور!")
+
+
 # --- معالج الرسائل ---
 async def protection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """ترتيب أولويات الحماية"""
@@ -236,8 +270,13 @@ def main() -> None:
     application.add_handler(CommandHandler("toggle_links", toggle_link_filter_command))
     application.add_handler(CommandHandler("add_word", add_blacklisted_word_command))
     
-    # معالج الرسائل العامة (يتم تمرير الرسائل إليه لعمليات الحماية التلقائية)
+    # معالج الرسائل العامة للحماية (يتم تمرير الرسائل إليه لعمليات الحماية التلقائية)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, protection_handler))
+
+    # معالج الرسائل للردود التلقائية (يجب أن يتم تسجيله بعد الـ protection_handler لضمان عدم تعارضه)
+    # ملاحظة: يتم تسجيله هنا ليتم تشغيله على الرسائل غير المعالجة من قبل الأوامر والحماية
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_greetings))
+
 
     logger.info("Ahemmad يبدأ عمليات المراقبة الآن...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
