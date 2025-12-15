@@ -10,6 +10,11 @@ from collections import defaultdict
 import re
 from telegram.constants import ChatType
 
+# --- الإضافات الجديدة لميزة يوتيوب ---
+import os 
+from yt_dlp import YoutubeDL 
+# --- نهاية الإضافات ---
+
 # تهيئة التسجيل
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -130,6 +135,81 @@ async def check_for_blacklisted_words(update: Update, context: ContextTypes.DEFA
         db.close()
     return False
 
+# --- دالة جديدة للبحث في يوتيوب ---
+async def youtube_search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """البحث في يوتيوب وإرسال ملف صوتي."""
+    message = update.message
+    text = message.text
+    chat_id = update.effective_chat.id
+
+    # 1. استخراج كلمة البحث باستخدام Regex
+    match = re.search(r'^(يوت|يوتيوب)\s+(.+)', text, re.IGNORECASE)
+    
+    if not match: return
+    
+    search_query = match.group(2).strip()
+    
+    if not search_query:
+        await message.reply_text("❌ الرجاء كتابة كلمة البحث بعد كلمة (يوت).")
+        return
+
+    # إرسال رسالة "جاري البحث..."
+    status_message = await message.reply_text(f"🔍 جاري البحث عن: **{search_query}** وتحويله إلى ملف صوتي...", parse_mode='Markdown')
+
+    # إنشاء مسار ملف مؤقت فريد
+    audio_file_path = f"audio_temp_{chat_id}.mp3"
+    
+    # 2. إعداد خيارات التحميل لـ yt-dlp
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'outtmpl': audio_file_path,
+        'quiet': True,
+        'skip_download': False,
+        'default_search': 'ytsearch',
+        'max_downloads': 1
+    }
+
+    try:
+        # 3. البحث وتحميل الفيديو الأول
+        with YoutubeDL(ydl_opts) as ydl:
+            # البحث عن الفيديو الأول فقط
+            info = ydl.extract_info(f"ytsearch1:{search_query}", download=True)
+            
+            if not info or not info.get('entries'):
+                await status_message.edit_text("❌ لم يتم العثور على نتائج مطابقة لطلبك.")
+                return
+            
+            video_info = info['entries'][0]
+
+        # 4. إرسال الملف الصوتي
+        with open(audio_file_path, 'rb') as audio_file:
+            await context.bot.send_audio(
+                chat_id=chat_id,
+                audio=audio_file,
+                title=video_info.get('title'),
+                performer=video_info.get('channel'),
+                caption=f"🎧 المصدر: **{video_info.get('title')}**\nالقناة: {video_info.get('channel')}",
+                parse_mode='Markdown'
+            )
+        
+        await status_message.delete() # حذف رسالة "جاري البحث..."
+        
+    except Exception as e:
+        logger.error(f"خطأ في عملية يوتيوب: {e}")
+        await status_message.edit_text("⚠️ حدث خطأ أثناء جلب الملف الصوتي. تأكد من توفر مكتبات `yt-dlp` و `ffmpeg`.")
+        
+    finally:
+        # 5. الحذف المضمون للملف (لضمان عدم حفظ أي بيانات)
+        if os.path.exists(audio_file_path):
+            os.remove(audio_file_path)
+
+# --- نهاية دالة يوتيوب ---
+
 # --- معالج الرسائل ---
 async def protection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """ترتيب أولويات الحماية"""
@@ -236,6 +316,11 @@ def main() -> None:
     application.add_handler(CommandHandler("toggle_links", toggle_link_filter_command))
     application.add_handler(CommandHandler("add_word", add_blacklisted_word_command))
     
+    # --- المعالج الجديد: البحث في يوتيوب ---
+    youtube_filter = filters.Regex(r'^(يوت|يوتيوب)\s+', flags=re.IGNORECASE) 
+    application.add_handler(MessageHandler(filters.TEXT & youtube_filter, youtube_search_handler))
+    # ------------------------------------
+
     # معالج الرسائل العامة (يتم تمرير الرسائل إليه لعمليات الحماية التلقائية)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, protection_handler))
 
