@@ -317,7 +317,12 @@ def main() -> None:
     application.add_handler(CommandHandler("add_word", add_blacklisted_word_command))
     
     # --- المعالج الجديد: البحث في يوتيوب ---
-    youtube_filter = filters.Regex(r'^(يوت|يوتيوب)\s+', flags=re.IGNORECASE) 
+    # --- المعالج الجديد: البحث في يوتيوب (إصلاح خطأ TypeError) ---
+    # 1. تجهيز النمط باستخدام re.compile لتضمين الـ flags
+    youtube_pattern = re.compile(r'^(يوت|يوتيوب)\s+', flags=re.IGNORECASE)
+    # 2. تمرير النمط المجهز إلى الفلتر (لتجنب الخطأ)
+    youtube_filter = filters.Regex(youtube_pattern)
+    
     application.add_handler(MessageHandler(filters.TEXT & youtube_filter, youtube_search_handler))
     # ------------------------------------
 
@@ -326,7 +331,6 @@ def main() -> None:
 
     logger.info("Ahemmad يبدأ عمليات المراقبة الآن...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-
 
 if __name__ == "__main__":
     main()
