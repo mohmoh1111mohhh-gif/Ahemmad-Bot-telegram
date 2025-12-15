@@ -1,7 +1,7 @@
 # main.py - منظومة Ahemmad 
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton # تم إضافة InlineKeyboard
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler # تم إضافة CallbackQueryHandler
 from config import BOT_TOKEN, SUPER_ADMIN_IDS
 from database import init_db, get_db, Group, GroupSetting, Session
 import logging
@@ -9,6 +9,8 @@ import time
 from collections import defaultdict
 import re
 from telegram.constants import ChatType
+import random # تم إضافة random للذكاء الاصطناعي في XO
+import os # تم إضافة os لقراءة التوكن
 
 # تهيئة التسجيل
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -19,6 +21,16 @@ URL_REGEX = re.compile(r'(https?://[^\s]+|t\.me/[^\s]+|@\w+|telegram\.me/[^\s]+)
 FLOOD_TRACKER = defaultdict(lambda: defaultdict(list))
 FLOOD_LIMIT = 5
 FLOOD_WINDOW = 3
+
+# --- متغيرات XO (تيك تاك تو) ---
+XO_GAMES = defaultdict(dict)
+EMOJIS = {'X': '❌', 'O': '⭕', ' ': '⬜'}
+BOT_O_ID = -1 # معرف وهمي للبوت كلاعب O
+BOARD_SIZE = 3
+
+# تم تحديث الـ SUPER_ADMIN_IDS بالمعرف الذي أرسلته (يجب أن يكون في config.py أو يتم تمريره)
+# إذا كنت تريد تعيينه هنا مباشرة لغرض الاختبار، استخدم هذا السطر مؤقتاً:
+# SUPER_ADMIN_IDS = [6499543059] 
 
 def get_or_create_group(chat_id: int, db: Session) -> Group:
     """استرجاع إعدادات المجموعة أو إنشائها"""
@@ -47,6 +59,7 @@ async def check_admin_permission(update: Update, context: ContextTypes.DEFAULT_T
         return False
 
 # --- دوال الحماية (Modules) ---
+# ... (دوام الحماية check_for_links, check_for_flood, check_for_blacklisted_words لم يتم تغييرها)
 
 async def check_for_links(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """فلترة الروابط بناءً على إعدادات المجموعة"""
@@ -133,10 +146,10 @@ async def check_for_blacklisted_words(update: Update, context: ContextTypes.DEFA
 # --- دالة الردود التلقائية الجديدة ---
 
 async def handle_greetings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """الرد على التحية والكلمات المخصصة"""
+    """الرد على التحية والكلمات المخصصة."""
     if not update.message or update.message.text is None: return
 
-    # يتم تجاهل الأوامر لتجنب التعارض
+    # تجاهل الأوامر لتجنب التعارض
     if update.message.text.startswith('/'): return
     
     # نتحقق إذا كانت الرسالة نصية
@@ -163,6 +176,193 @@ async def handle_greetings(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         elif "صباح الخير" in text:
             await update.message.reply_text("صباح النور والسرور!")
 
+# --- دوال لعبة XO (تيك تاك تو) ---
+
+def get_empty_cells(board):
+    """إرجاع قائمة بجميع الخلايا الفارغة على اللوحة."""
+    cells = []
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            if board[r][c] == ' ':
+                cells.append((r, c))
+    return cells
+
+def check_win(board):
+    """التحقق من حالة الفوز."""
+    for i in range(BOARD_SIZE):
+        if board[i][0] == board[i][1] == board[i][2] != ' ': return board[i][0]
+        if board[0][i] == board[1][i] == board[2][i] != ' ': return board[0][i]
+    if board[0][0] == board[1][1] == board[2][2] != ' ': return board[0][0]
+    if board[0][2] == board[1][1] == board[2][0] != ' ': return board[0][2]
+    return None
+
+def check_draw(board):
+    """التحقق من حالة التعادل."""
+    return not check_win(board) and not get_empty_cells(board)
+
+def get_board_markup(chat_id):
+    """إنشاء لوحة المفاتيح المضمنة (Inline Keyboard) للعبة XO."""
+    game_state = XO_GAMES.get(chat_id, {})
+    board = game_state.get('board', [[' ']*BOARD_SIZE for _ in range(BOARD_SIZE)])
+    
+    keyboard = []
+    for r in range(BOARD_SIZE):
+        row_buttons = []
+        for c in range(BOARD_SIZE):
+            callback_data = f"XO_{r}_{c}"
+            row_buttons.append(InlineKeyboardButton(EMOJIS[board[r][c]], callback_data=callback_data))
+        keyboard.append(row_buttons)
+        
+    return InlineKeyboardMarkup(keyboard)
+
+def bot_move(board):
+    """منطق الذكاء الاصطناعي البسيط للبوت (اللاعب O)."""
+    empty_cells = get_empty_cells(board)
+    if not empty_cells: return None
+    
+    # التحقق من الفوز/الحظر والتحرك (كما تم شرحه سابقاً)
+    for marker in ['O', 'X']:
+        for r, c in empty_cells:
+            board[r][c] = marker
+            if check_win(board) == marker:
+                board[r][c] = ' '
+                return (r, c)
+            board[r][c] = ' '
+            
+    if board[1][1] == ' ': return (1, 1)
+    corners = [(0, 0), (0, 2), (2, 0), (2, 2)]
+    random.shuffle(corners)
+    for r, c in corners:
+        if board[r][c] == ' ': return (r, c)
+            
+    return random.choice(empty_cells)
+
+
+# --- معالجات XO (XO Handlers) ---
+
+async def start_xo_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """بدء عملية اختيار وضع اللعب عند كتابة 'XO' أو 'xo'."""
+    chat_id = update.effective_chat.id
+    
+    if chat_id in XO_GAMES:
+        await update.message.reply_text("🚫 هناك لعبة XO بالفعل قيد التقدم في هذه المجموعة. يرجى إنهاء اللعبة الحالية أولاً.")
+        return
+        
+    keyboard = [
+        [InlineKeyboardButton("🧑‍🤝‍🧑 لعب ضد إنسان آخر", callback_data="XO_MODE_PVP")],
+        [InlineKeyboardButton("🤖 لعب ضد البوت", callback_data="XO_MODE_PVB")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "🎮 **اختر وضع اللعب:**",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def xo_mode_select_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """معالج لاختيار وضع اللعب (PVP أو PVB)."""
+    query = update.callback_query
+    await query.answer()
+    
+    chat_id = query.message.chat_id
+    user_id = query.from_user.id
+    mode = query.data
+    
+    XO_GAMES[chat_id] = {
+        'board': [[' ']*BOARD_SIZE for _ in range(BOARD_SIZE)],
+        'player_x': user_id, 
+        'player_o': None,
+        'turn': 'X',
+        'message_id': query.message.message_id
+    }
+    
+    if mode == "XO_MODE_PVP":
+        text = (f"🎮 **بدء لعبة XO (إنسان ضد إنسان)!**\n\n"
+                f"**اللاعب X** هو **{query.from_user.first_name}**.\n\n"
+                f"**اللاعب O:** يرجى الضغط على أي مربع للانضمام والبدء.")
+        
+    elif mode == "XO_MODE_PVB":
+        XO_GAMES[chat_id]['player_o'] = BOT_O_ID
+        text = (f"🎮 **بدء لعبة XO (ضد البوت)!**\n\n"
+                f"**أنت** هو اللاعب X ({EMOJIS['X']}).\n"
+                f"**البوت** هو اللاعب O ({EMOJIS['O']}).\n\n"
+                f"**الدور الحالي:** {EMOJIS['X']}")
+        
+    await query.edit_message_text(text=text, reply_markup=get_board_markup(chat_id), parse_mode='Markdown')
+
+async def process_xo_move(chat_id, user_id, r, c, context: ContextTypes.DEFAULT_TYPE):
+    """دالة مساعدة لمعالجة حركة اللاعب وتحديث اللوحة."""
+    game = XO_GAMES[chat_id]
+    
+    if r != -1 and c != -1: # إذا لم تكن حركة انضمام
+        if game['board'][r][c] != ' ': return 
+        game['board'][r][c] = game['turn']
+    
+    winner = check_win(game['board'])
+    if winner or check_draw(game['board']):
+        final_text = f"🏆 **انتهت اللعبة!** فاز اللاعب {EMOJIS.get(winner, ' ')} 🎉" if winner else "🤝 **انتهت اللعبة!** تعادل. 😩"
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=game['message_id'], text=final_text, reply_markup=get_board_markup(chat_id), parse_mode='Markdown')
+        del XO_GAMES[chat_id]
+        return
+        
+    game['turn'] = 'O' if game['turn'] == 'X' else 'X'
+
+    player_x_info = await context.bot.get_chat_member(chat_id, game['player_x'])
+    player_x_name = player_x_info.user.first_name
+    player_o_name = "البوت" if game['player_o'] == BOT_O_ID else \
+                    (await context.bot.get_chat_member(chat_id, game['player_o'])).user.first_name if game['player_o'] else "ينتظر لاعب O"
+    
+    current_turn_text = f"**الدور الحالي:** {EMOJIS[game['turn']]}"
+    
+    await context.bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=game['message_id'],
+        text=f"🎮 **اللاعب X:** {player_x_name}\n**اللاعب O:** {player_o_name}\n\n{current_turn_text}",
+        reply_markup=get_board_markup(chat_id),
+        parse_mode='Markdown'
+    )
+    return True
+
+async def xo_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """معالج ضغطات أزرار لوحة XO."""
+    query = update.callback_query
+    await query.answer()
+
+    chat_id = query.message.chat_id
+    user_id = query.from_user.id
+    
+    if chat_id not in XO_GAMES: await query.edit_message_text("❌ انتهت اللعبة."); return
+        
+    game = XO_GAMES[chat_id]
+    is_bot_o = game['player_o'] == BOT_O_ID
+
+    # 1. انضمام اللاعب O (PVP)
+    if game['player_o'] is None and user_id != game['player_x']:
+        game['player_o'] = user_id
+        await process_xo_move(chat_id, user_id, -1, -1, context) # تحديث الرسالة
+        return
+    
+    # 2. التحقق من الدور
+    is_player_x = user_id == game['player_x']
+    is_player_o = user_id == game['player_o']
+    
+    if game['turn'] == 'X' and not is_player_x: await query.answer("🚫 ليس دورك!", show_alert=True); return
+    if game['turn'] == 'O' and not is_player_o and not is_bot_o: await query.answer("🚫 ليس دورك!", show_alert=True); return
+    
+    # 3. تنفيذ الحركة البشرية
+    try: _, r_str, c_str = query.data.split('_'); r, c = int(r_str), int(c_str)
+    except ValueError: return
+        
+    if game['board'][r][c] != ' ': await query.answer("❌ هذا المربع مأخوذ!", show_alert=True); return
+        
+    move_successful = await process_xo_move(chat_id, user_id, r, c, context)
+    
+    # 4. دور البوت (إذا كانت PVB وكانت الحركة ناجحة)
+    if move_successful and is_bot_o and game['turn'] == 'O':
+        # يجب أن يكون هناك تأخير هنا لتبدو الحركة طبيعية (لكنها تتطلب استيراد asyncio)
+        r_bot, c_bot = bot_move(game['board'])
+        await process_xo_move(chat_id, BOT_O_ID, r_bot, c_bot, context)
 
 # --- معالج الرسائل ---
 async def protection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -255,14 +455,16 @@ async def add_blacklisted_word_command(update: Update, context: ContextTypes.DEF
 
 
 def main() -> None:
-    if not BOT_TOKEN:
-        logger.error("خطأ: لم يتم العثور على AHMMAD_TOKEN. تأكد من إعداد ملف .env.")
+    # استخدام os.environ للحصول على التوكن كما اتفقنا، أو BOT_TOKEN من config.py
+    token = os.environ.get("TOKEN") or BOT_TOKEN 
+    if not token:
+        logger.error("خطأ: لم يتم العثور على التوكن (TOKEN أو BOT_TOKEN).")
         return
         
     init_db() # إنشاء الجداول عند البدء
-    application = Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token(token).build()
 
-    # تسجيل الـ Handlers
+    # 1. تسجيل معالجات الأوامر
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("mute", mute_command)) 
@@ -270,11 +472,21 @@ def main() -> None:
     application.add_handler(CommandHandler("toggle_links", toggle_link_filter_command))
     application.add_handler(CommandHandler("add_word", add_blacklisted_word_command))
     
-    # معالج الرسائل العامة للحماية (يتم تمرير الرسائل إليه لعمليات الحماية التلقائية)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, protection_handler))
+    # 2. تسجيل معالجات لعبة XO
+    xo_pattern = re.compile(r'^(xo|XO)$', flags=re.IGNORECASE)
+    # البدء عند كتابة XO
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex(xo_pattern), start_xo_by_text))
+    # معالج ضغطات الأزرار لاختيار الوضع (PVP/PVB)
+    application.add_handler(CallbackQueryHandler(xo_mode_select_handler, pattern=r'^XO_MODE_'))
+    # معالج ضغطات أزرار اللعب
+    application.add_handler(CallbackQueryHandler(xo_button_handler, pattern=r'^XO_[0-9]_[0-9]$'))
 
-    # معالج الرسائل للردود التلقائية (يجب أن يتم تسجيله بعد الـ protection_handler لضمان عدم تعارضه)
-    # ملاحظة: يتم تسجيله هنا ليتم تشغيله على الرسائل غير المعالجة من قبل الأوامر والحماية
+
+    # 3. معالج الرسائل العامة
+    # يجب أن يعالج الحماية أولاً (في المجموعات فقط)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, protection_handler))
+    
+    # ثم يعالج الردود التلقائية (في جميع الأماكن)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_greetings))
 
 
